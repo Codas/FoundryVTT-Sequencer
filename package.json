@@ -30,7 +30,11 @@
     "husky": "^8.0.3",
     "lint-staged": "^13.2.1",
     "prettier": "^2.8.7",
-    "svelte-dnd-action": "^0.9.18"
+    "svelte-dnd-action": "^0.9.18",
+
+		"@rollup/plugin-node-resolve": "^15.2.3",
+		"foundry-pf2e": "github:reonZ/foundry-pf2e",
+		"vite-tsconfig-paths": "^4.3.2"
   },
   "browserslist": [
     ">5%",

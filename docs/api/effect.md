@@ -872,8 +872,6 @@ Animatable properties are as follows:
   - `scale.y`
   - `width`
   - `height`
-
-- `alphaFilter`
   - `alpha`
 
 - `spriteContainer`
@@ -924,8 +922,6 @@ Animatable properties are as follows:
   - `scale.y`
   - `width`
   - `height`
-
-- `alphaFilter`
   - `alpha`
 
 - `spriteContainer`

@@ -1,10 +1,11 @@
 import * as lib from "../lib/lib.js";
 import SequencerFileCache from "./sequencer-file-cache.js";
 
-const flipBookTextureCache = {};
-
 export class SequencerFileBase {
   static make(inData, inDBPath, inMetadata) {
+    if (typeof inData === 'string' && !inDBPath && !inMetadata) {
+      return new SequencerFilePlain(inData)
+    }
     const originalFile = inData?.file ?? inData;
     const file = foundry.utils.duplicate(originalFile);
     const isRangeFind =
@@ -19,8 +20,41 @@ export class SequencerFileBase {
   }
 }
 
+export class SequencerFilePlain extends SequencerFileBase {
+  #file
+  rangeFind = false;
+
+  constructor(inData) {
+    super();
+    this.#file = inData
+  }
+
+  getFile() {
+    return this.#file
+  }
+  getAllFiles() {
+    return [this.#file]
+  }
+  async validate() {
+    return Promise.resolve(!!this.#file)
+  }
+
+  clone() {
+    return new SequencerFilePlain(this.#file)
+  }
+
+  getTimestamps() {
+    return undefined
+  }
+}
+
+
 export class SequencerFile extends SequencerFileBase {
   rangeFind = false;
+
+  get isFlipbook() {
+    return this.originalMetadata?.flipbook
+  }
 
   constructor(inData, inDBPath, inMetadata) {
     super();
@@ -36,13 +70,6 @@ export class SequencerFile extends SequencerFileBase {
     this.originalFile = inData?.file ?? inData;
     this.file = foundry.utils.duplicate(this.originalFile);
     this.fileIndex = null;
-
-    this.fileTextureMap = Object.fromEntries(
-      this.getAllFiles().map((file) => {
-        return [file, false];
-      })
-    );
-
     this.twister = false;
   }
 
@@ -122,32 +149,6 @@ export class SequencerFile extends SequencerFileBase {
     return files;
   }
 
-  destroy() {
-    if (this.originalMetadata?.flipbook) return;
-    for (let texture of Object.values(this.fileTextureMap)) {
-      if (!texture) continue;
-      try {
-        texture?.baseTexture?.resource?.source?.removeAttribute("src");
-      } catch (err) {}
-      try {
-        texture?.baseTexture?.resource?.source?.pause();
-      } catch (err) {}
-      try {
-        texture?.baseTexture?.resource?.source?.remove();
-      } catch (err) {}
-      try {
-        texture?.baseTexture?.resource?.source?.load();
-      } catch (err) {}
-      texture.destroy();
-    }
-  }
-
-  async _getTexture(file) {
-    if (this.fileTextureMap[file]) return this.fileTextureMap[file];
-    this.fileTextureMap[file] = await SequencerFileCache.loadFile(file);
-    return this.fileTextureMap[file];
-  }
-
   _adjustScaleForPadding(distance, width) {
     return (
       distance /
@@ -159,27 +160,11 @@ export class SequencerFile extends SequencerFileBase {
     return this.template ? this.template[1] / width : undefined;
   }
 
-  async _getFlipBookSheet(filePath) {
-    if (!this.originalMetadata?.flipbook) return false;
-    if (flipBookTextureCache[filePath]) {
-      return flipBookTextureCache[filePath];
-    }
-    flipBookTextureCache[filePath] = this.file.map((file) => {
-      return PIXI.Texture.from(file);
-    });
-    return flipBookTextureCache[filePath];
-  }
-
-  async getTexture(distance) {
-    const filePath = this.getFile();
-    const texture = await this._getTexture(this.getFile());
-    const sheet = await this._getFlipBookSheet(filePath);
+  // was `getFileForDistance`
+  getDistanceScaling(distance, width) {
     return {
-      filePath,
-      texture,
-      sheet,
-      spriteScale: this._adjustScaleForPadding(distance, texture.width),
-      spriteAnchor: this._adjustAnchorForPadding(texture.width),
+      spriteScale: this._adjustScaleForPadding(distance, width),
+      spriteAnchor: this._adjustAnchorForPadding(width),
     };
   }
 }
@@ -243,21 +228,11 @@ export class SequencerFileRangeFind extends SequencerFile {
     return this.getFile(ft);
   }
 
-  async getTexture(distance = 400) {
-    const { filePath, texture } = await this._getTextureForDistance(distance);
-    return {
-      filePath,
-      texture,
-      spriteScale: this._adjustScaleForPadding(distance, texture.width),
-      spriteAnchor: this._adjustAnchorForPadding(texture.width),
-    };
-  }
-
   _getMatchingDistance(inEntry) {
     return SequencerFileRangeFind.ftToDistanceMap[inEntry] / this._gridSizeDiff;
   }
 
-  _rangeFind(inDistance) {
+  getFileForDistance(inDistance) {
     if (!this._fileDistanceMap) {
       let distances = Object.keys(this.file)
         .filter(
@@ -306,11 +281,5 @@ export class SequencerFileRangeFind extends SequencerFile {
     return possibleFiles.length > 1
       ? lib.random_array_element(possibleFiles, { twister: this.twister })
       : possibleFiles[0];
-  }
-
-  async _getTextureForDistance(distance) {
-    const filePath = this._rangeFind(distance);
-    const texture = await this._getTexture(filePath);
-    return { filePath, texture };
   }
 }

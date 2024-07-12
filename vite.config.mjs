@@ -57,7 +57,7 @@ export default () =>
 		// resources served with this particular Vite configuration. Modify the proxy rule as necessary for your
 		// static resources / project.
 		server: {
-			port: 29999,
+			port: 30001,
 			open: '/game',
 			proxy: {
 				// Serves static files from main Foundry server.

@@ -383,15 +383,15 @@ export default class SequencerEffectManager {
     const playData = effect.play();
 
     SequenceManager.VisibleEffects.add(effect.id, effect);
-    if (effect.data.name) {
-      effect._ticker.add(() => {
-        if (effect.isDestroyed) return;
-        PositionContainer.set(effect.data.name, {
-          start: effect.sourcePosition,
-          end: effect.targetPosition,
-        });
-      });
-    }
+    // if (effect.data.name) {
+    //   effect._ticker.add(() => {
+    //     if (effect.isDestroyed) return;
+    //     PositionContainer.set(effect.data.name, {
+    //       start: effect.sourcePosition,
+    //       end: effect.targetPosition,
+    //     });
+    //   });
+    // }
 
     if (data.temporary && effect.owner) {
       let lastSourcePosition = {};

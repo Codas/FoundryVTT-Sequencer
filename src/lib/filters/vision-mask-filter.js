@@ -1,6 +1,6 @@
 export default class VisionSamplerShader extends BaseSamplerShader {
   /** @override */
-  static classPluginName = null;
+  static classPluginName = null
 
   /** @inheritdoc */
   static vertexShader = `
@@ -16,7 +16,7 @@ export default class VisionSamplerShader extends BaseSamplerShader {
         vUvsMask = aVertexPosition / screenDimensions;
         gl_Position = vec4((projectionMatrix * vec3(aVertexPosition, 1.0)).xy, 0.0, 1.0);
       }
-    `;
+    `
 
   /** @inheritdoc */
   static fragmentShader = `
@@ -31,7 +31,7 @@ export default class VisionSamplerShader extends BaseSamplerShader {
         float mask = enableVisionMasking ? texture2D(maskSampler, vUvsMask).r : 1.0;
         gl_FragColor = texture2D(sampler, vUvs) * tintAlpha * mask;
       }
-    `;
+    `
 
   /** @inheritdoc */
   static defaultUniforms = {
@@ -40,13 +40,13 @@ export default class VisionSamplerShader extends BaseSamplerShader {
     maskSampler: 0,
     screenDimensions: [1, 1],
     enableVisionMasking: false,
-  };
+  }
 
   /** @override */
   _preRender(mesh) {
-    super._preRender(mesh);
-    this.uniforms.maskSampler = canvas.masks.vision.renderTexture;
-    this.uniforms.screenDimensions = canvas.screenDimensions;
-    this.uniforms.enableVisionMasking = canvas.visible;
+    super._preRender(mesh)
+    this.uniforms.maskSampler = canvas.masks.vision.renderTexture
+    this.uniforms.screenDimensions = canvas.screenDimensions
+    this.uniforms.enableVisionMasking = canvas.visible
   }
 }

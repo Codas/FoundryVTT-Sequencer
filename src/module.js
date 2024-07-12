@@ -42,6 +42,8 @@ Hooks.once("init", async function() {
     CONSTANTS.INTEGRATIONS.ISOMETRIC.MODULE_NAME,
   )?.active;
 	CONSTANTS.IS_V12 = foundry.utils.isNewerVersion(game.version, "12");
+  // Enable basis transcoder for GPU compressible
+  CONFIG.Canvas.transcoders.basis = true
   initializeModule();
   registerSocket();
 });

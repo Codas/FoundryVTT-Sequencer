@@ -3,6 +3,7 @@ import { debug, user_can_do } from "./lib/lib.js";
 import { DatabaseViewerApp } from "./formapplications/database/database-viewer-app.js";
 import { EffectsUIApp } from "./formapplications/effects-ui/effects-ui-app.js";
 
+
 export function registerSettings() {
   game.settings.register(CONSTANTS.MODULE_NAME, "enable-fix-pixi", {
     name: "SEQUENCER.Setting.EnablePixiFix.Title",

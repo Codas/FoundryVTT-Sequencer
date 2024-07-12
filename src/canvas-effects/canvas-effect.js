@@ -11,6 +11,8 @@ import SequencerEffectManager from "../modules/sequencer-effect-manager.js";
 import { SequencerAboveUILayer } from "./effects-layer.js";
 import VisionSamplerShader from "../lib/filters/vision-mask-filter.js";
 import MaskFilter from "../lib/filters/mask-filter.js";
+import { AnimatedTilingSprite } from "../lib/pixi/AnimatedTilingSprite.js";
+import { SequencerSpriteManager } from "./sequencer-sprite-manager.ts";
 
 const hooksManager = {
 	_hooks: new Map(),
@@ -91,12 +93,12 @@ const SyncGroups = {
 export default class CanvasEffect extends PIXI.Container {
 	#elevation = 0;
 	#sort = 0;
-	#sortLayer = 800
+	#sortLayer = 800;
 
 	constructor(inData) {
 		super();
 
-		this.sortableChildren = true;
+		this.sortableChildren = false;
 
 		// Set default values
 		this.actualCreationTime = +new Date();
@@ -114,7 +116,6 @@ export default class CanvasEffect extends PIXI.Container {
 		this._cachedTargetData = {};
 
 		this.uuid = false;
-
 	}
 
 	static get protectedValues() {
@@ -477,16 +478,7 @@ export default class CanvasEffect extends PIXI.Container {
 	}
 
 	async playMedia() {
-		if (this.animatedSprite) {
-			await this.sprite.play();
-		} else if (this.video) {
-			try {
-				await this.video.play().then(() => {
-					this.updateTexture();
-				});
-			} catch (err) {
-			}
-		}
+		this.sprite.play()
 		this._setupTimestampHook(this.mediaCurrentTime * 1000);
 	}
 
@@ -547,11 +539,8 @@ export default class CanvasEffect extends PIXI.Container {
 	}
 
 	set mediaPlaybackRate(inPlaybackRate) {
-		if (this.animatedSprite) {
-			this.sprite.animationSpeed = 0.4 * inPlaybackRate;
-		} else if (this.video) {
-			this.video.playbackRate = inPlaybackRate;
-		}
+		// Playbackrate for spritesheets is now handled by timing info in the animation sequence
+		this.video.playbackRate = inPlaybackRate;
 	}
 
 	set mediaCurrentTime(newTime) {
@@ -559,7 +548,7 @@ export default class CanvasEffect extends PIXI.Container {
 			const newFrame = Math.floor(newTime * this.sprite.totalFrames);
 			const clampedFrame = Math.max(
 				0,
-				Math.min(newFrame, this.sprite.totalFrames)
+				Math.min(newFrame, this.sprite.totalFrames - 1)
 			);
 			if (this.mediaIsPlaying) {
 				this.sprite.gotoAndPlay(clampedFrame);
@@ -576,7 +565,7 @@ export default class CanvasEffect extends PIXI.Container {
 			return (
 				this.sprite.totalFrames /
 				this.sprite.animationSpeed /
-				PIXI.Ticker.shared.FPS
+				this._spritesheetFramerate ?? PIXI.Ticker.shared.FPS
 			);
 		} else if (this.video) {
 			return this.video?.duration / this.mediaPlaybackRate;
@@ -1292,6 +1281,7 @@ export default class CanvasEffect extends PIXI.Container {
 		this._initializeVariables();
 		await this._contextLostCallback();
 		await this._loadTexture();
+		this._prepareVideoSpritesheet()
 		this._addToContainer();
 		this._createSprite();
 		this._calculateDuration();
@@ -1426,18 +1416,7 @@ export default class CanvasEffect extends PIXI.Container {
 			}
 		}
 
-		if (this._file instanceof SequencerFileBase) {
-			this._file.destroy();
-		}
-
-		if (this.video) {
-			try {
-				this.video.removeAttribute("src");
-				this.video.pause();
-				this.video.load();
-			} catch (err) {
-			}
-		}
+		this.sprite.destroy()
 
 		try {
 			if (this.data.screenSpace) {
@@ -1449,7 +1428,6 @@ export default class CanvasEffect extends PIXI.Container {
 		if (this.data.syncGroup) {
 			SyncGroups.remove(this);
 		}
-
 		this.removeChildren().forEach((child) => child.destroy({ children: true }));
 	}
 
@@ -1547,14 +1525,8 @@ export default class CanvasEffect extends PIXI.Container {
 			);
 		} else {
 			if (!Sequencer.Database.entryExists(this.data.file)) {
-				let texture = await SequencerFileCache.loadFile(this.data.file);
-				this.video = this.data.file.toLowerCase().endsWith(".webm")
-					? texture?.baseTexture?.resource?.source ?? false
-					: false;
-				this.texture = texture;
-				this._file = texture;
+				this._file = SequencerFileBase.make(this.data.file)
 				this._currentFilePath = this.data.file;
-				return;
 			}
 
 			this._file = Sequencer.Database.getEntry(this.data.file).clone();
@@ -1570,12 +1542,9 @@ export default class CanvasEffect extends PIXI.Container {
 			let ray = new Ray(this.sourcePosition, this.targetPosition);
 			this._rotateTowards(ray);
 			ray = new Ray(this.sourcePosition, this.targetPosition);
-			let { filePath, texture, sheet } = await this._getTextureForDistance(
-				ray.distance
-			);
+			let { filePath, texture } = await this._getTextureForDistance(ray.distance)
 			this._currentFilePath = filePath;
 			this.texture = texture;
-			this.spriteSheet = sheet;
 		} else if (
 			!this._isRangeFind ||
 			(this._isRangeFind && !this.data.stretchTo)
@@ -1587,46 +1556,18 @@ export default class CanvasEffect extends PIXI.Container {
 		}
 
 		if (this._isRangeFind && this.data.stretchTo && this.data.attachTo?.active) {
-			let spriteType = this.data.tilingTexture ? PIXI.TilingSprite : SpriteMesh;
-			this._relatedSprites[this._currentFilePath] = new spriteType(
-				this.texture,
-				this.data.xray ? null : VisionSamplerShader
-			);
-			if (this.data.tint) {
-				this._relatedSprites[this._currentFilePath].tint = this.data.tint;
-			}
-
-			new Promise(async (resolve) => {
-				for (let filePath of this._file.getAllFiles()) {
-					if (filePath === this._currentFilePath) continue;
-
-					let texture = await this._file._getTexture(filePath);
-					let spriteType = this.data.tilingTexture
-						? PIXI.TilingSprite
-						: SpriteMesh;
-					let sprite = new spriteType(
-						texture,
-						this.data.xray ? null : VisionSamplerShader
-					);
-					sprite.renderable = false;
-					this._relatedSprites[filePath] = sprite;
-				}
-
-				resolve();
-			});
+			this.sprite.preloadVariants()
 		}
 
 		this._template = this._file.template ?? this._template;
-		this.video = this._currentFilePath.toLowerCase().endsWith(".webm")
-			? this.texture?.baseTexture?.resource?.source
-			: false;
 	}
 
-	get startTimeMs(){
+	
+	get startTimeMs() {
 		return this._startTime * 1000;
 	}
 
-	get endTimeMs(){
+	get endTimeMs() {
 		return this._endTime * 1000;
 	}
 
@@ -1742,7 +1683,6 @@ export default class CanvasEffect extends PIXI.Container {
 
 		// Resolve duration promise so that owner of effect may know when it is finished
 		this._durationResolve(this._totalDuration);
-
 	}
 
 	/**
@@ -1788,7 +1728,6 @@ export default class CanvasEffect extends PIXI.Container {
 		}
 	}
 
-
 	/**
 	 * Creates the sprite, and the relevant containers that manage the position and offsets of the overall visual look of the sprite
 	 *
@@ -1797,56 +1736,41 @@ export default class CanvasEffect extends PIXI.Container {
 	_createSprite() {
 		this.renderable = false;
 
-		const args = [this.spriteSheet ? this.spriteSheet : PIXI.Texture.EMPTY];
-		if (
-			!this.data.xray &&
-			!this.spriteSheet &&
-			!this.data.screenSpace &&
-			!this.data.screenSpaceAboveUI
-		) {
-			args.push(VisionSamplerShader);
-		}
 
-		const spriteType = this.spriteSheet ? PIXI.AnimatedSprite : SpriteMesh;
-		const sprite = new spriteType(...args);
+		// TODO handle / fix vision sampler shader for advanced vision masking?
+		const useVisionMasking = !this.data.xray && !this.data.screenSpace && !this.data.screenSpaceAboveUI;
+		const shader = useVisionMasking ? VisionSamplerShader : undefined
+		const text = this.data.text?.text;
+
+		const fontSettings = foundry.utils.deepClone(this.data.text);
+		fontSettings.fontSize =
+			(fontSettings?.fontSize ?? 26) * (150 / canvas.grid.size);
+
+		const spriteData = {
+			antialiasing: this.data?.fileOptions?.antialiasing,
+			tiling: this.data.tilingTexture,
+			template: this.template,
+			textStyle: fontSettings,
+			file: this._file,
+			shader,
+		}
+		/** @type {SequencerSpriteManager} */
+		const sprite = new SequencerSpriteManager({data: spriteData, text})
+
 		this.sprite = this.spriteContainer.addChild(sprite);
 		this.sprite.id = this.id + "-sprite";
-
-		Object.values(this._relatedSprites).forEach((sprite) => {
-			if (this.data.tint) {
-				sprite.tint = this.data.tint;
-			}
-			this.sprite.addChild(sprite);
-		});
-
-		this.animatedSprite = false;
-		if (this.spriteSheet) {
-			this.animatedSprite = true;
-			this.sprite.animationSpeed = 0.4;
-			this.sprite.loop = false;
-		}
 
 		let textSprite;
 
 		if (this.data.text) {
-			const text = this.data.text.text;
-			const fontSettings = foundry.utils.deepClone(this.data.text);
-			fontSettings.fontSize =
-				(fontSettings?.fontSize ?? 26) * (150 / canvas.grid.size);
-
-			textSprite = new PIXI.Text(text, fontSettings);
-			textSprite.resolution = 5;
-			textSprite.zIndex = 1;
-
-			textSprite.anchor.set(
-				this.data.text?.anchor?.x ?? 0.5,
-				this.data.text?.anchor?.y ?? 0.5
-			);
+			this.sprite.zIndex = 1;
 		}
 
-		this.sprite.filters = [];
+		const anchor = this.data.text ? this.data.text.anchor : this.data.spriteAnchor
+		this.sprite.anchor.set(anchor?.x ?? 0.5, anchor?.y ?? 0.5);
 
 		if (this.data.filters) {
+			this.sprite.filters = [];
 			for (let index = 0; index < this.data.filters.length; index++) {
 				const filterData = this.data.filters[index];
 				const filter = new filters[filterData.className](filterData.data);
@@ -1858,9 +1782,9 @@ export default class CanvasEffect extends PIXI.Container {
 			}
 		}
 
-		this.alphaFilter = new PIXI.filters.AlphaFilter(this.data.opacity);
-		this.alphaFilter.id = this.id + "-alphaFilter";
-		this.sprite.filters.push(this.alphaFilter);
+		// Alpha is identical to using the alpha filter in case there in only one element in
+		// the container. Since we apply alpha directly to the sprite, this is fine.
+		this.sprite.alpha = this.data.opacity;
 
 		let spriteOffsetX = this.data.spriteOffset?.x ?? 0;
 		let spriteOffsetY = this.data.spriteOffset?.y ?? 0;
@@ -1871,10 +1795,6 @@ export default class CanvasEffect extends PIXI.Container {
 
 		this.sprite.position.set(spriteOffsetX, spriteOffsetY);
 
-		this.sprite.anchor.set(
-			this.data.spriteAnchor?.x ?? 0.5,
-			this.data.spriteAnchor?.y ?? 0.5
-		);
 
 		let spriteRotation = this.data.spriteRotation ?? 0;
 		if (this.data.randomSpriteRotation) {
@@ -1902,24 +1822,15 @@ export default class CanvasEffect extends PIXI.Container {
 			this.sprite.tint = this.data.tint;
 		}
 
-		if (textSprite) {
-			if (this.data.tint) {
-				textSprite.tint = this.data.tint;
-			}
-			this.sprite.addChild(textSprite);
+		// only set filter and fade effects when a faded version should actually be shown
+		if (this.shouldShowFadedVersion) {
+			this.alpha = game.settings.get(CONSTANTS.MODULE_NAME,"user-effect-opacity") / 100;
+			this.filters = [
+				new PIXI.filters.ColorMatrixFilter({
+					saturation: this.shouldShowFadedVersion ? -1 : 1,
+				}),
+			];
 		}
-
-		this.filters = [
-			new PIXI.filters.ColorMatrixFilter({
-				saturation: this.shouldShowFadedVersion ? -1 : 1,
-			}),
-			new PIXI.filters.AlphaFilter(
-				this.shouldShowFadedVersion
-					? game.settings.get(CONSTANTS.MODULE_NAME, "user-effect-opacity") /
-					100
-					: 1
-			),
-		];
 
 		this.updateElevation();
 	}
@@ -1942,7 +1853,7 @@ export default class CanvasEffect extends PIXI.Container {
 				canvaslib.get_object_elevation(this.source ?? {}),
 				canvaslib.get_object_elevation(this.target ?? {})
 			);
-		if(!CONSTANTS.IS_V12) targetElevation += 1;
+		if (!CONSTANTS.IS_V12) targetElevation += 1;
 		let effectElevation = this.data.elevation?.elevation ?? 0;
 		if (!this.data.elevation?.absolute) {
 			effectElevation += targetElevation;
@@ -2247,6 +2158,10 @@ export default class CanvasEffect extends PIXI.Container {
 	 * @private
 	 */
 	async _getTextureForDistance(distance) {
+		// TODO this needs to be reworked. We don't easily have the texture anymore.
+		// This is only ever called by _applyDistanceScaling.
+		// Multiple steps: Get filepath, activate by managed sprite sheets.
+		// activate should return the texture, which we can then use for scaling.
 		if (!this._distanceCache || this._distanceCache?.distance !== distance) {
 			let scaleX = 1.0;
 			let scaleY = 1.0;
@@ -2273,24 +2188,6 @@ export default class CanvasEffect extends PIXI.Container {
 				} else {
 					scaleY = result.spriteScale;
 				}
-			} else if (this._file instanceof PIXI.Texture) {
-				filePath = this.data.file;
-
-				texture = this._file;
-
-				spriteAnchor = this.template.startPoint / texture.width;
-
-				const widthWithPadding =
-					texture.width - (this.template.startPoint + this.template.endPoint);
-				let spriteScale = distance / widthWithPadding;
-
-				scaleX = spriteScale;
-
-				if (this.data.stretchTo?.onlyX) {
-					scaleY = widthWithPadding / texture.width;
-				} else {
-					scaleY = spriteScale;
-				}
 			}
 
 			this._distanceCache = {
@@ -2313,9 +2210,12 @@ export default class CanvasEffect extends PIXI.Container {
 	 * @private
 	 */
 	async _applyDistanceScaling() {
+		// this needs rework, see above
 		const ray = new Ray(this.sourcePosition, this.targetPosition);
 
 		this._rotateTowards(ray);
+
+		this.filePath = this._file
 
 		let { filePath, texture, spriteAnchor, scaleX, scaleY, distance } =
 			await this._getTextureForDistance(ray.distance);
@@ -2338,15 +2238,7 @@ export default class CanvasEffect extends PIXI.Container {
 			if (this._relatedSprites[filePath]) {
 				this._relatedSprites[filePath].renderable = true;
 			} else {
-				let sprite;
-				let spriteType = this.data.tilingTexture
-					? PIXI.TilingSprite
-					: SpriteMesh;
-				if (this.data.xray) {
-					sprite = new spriteType(texture);
-				} else {
-					sprite = new spriteType(texture, VisionSamplerShader);
-				}
+				const sprite = this.#buildSpriteInstance({texture: texture, tiling: this.data.tilingTexture})
 				this._relatedSprites[filePath] = sprite;
 				if (this.data.tint) {
 					sprite.tint = this.data.tint;
@@ -2552,17 +2444,6 @@ export default class CanvasEffect extends PIXI.Container {
 				)
 			);
 		}
-	}
-
-	set texture(inTexture) {
-		if (this.data?.fileOptions?.antialiasing !== null) {
-			inTexture.baseTexture.setStyle(0, this.data?.fileOptions?.antialiasing)
-		}
-		this._texture = inTexture;
-	}
-
-	get texture() {
-		return this._texture;
 	}
 
 	async _transformStretchToAttachedSprite() {
@@ -2938,10 +2819,10 @@ export default class CanvasEffect extends PIXI.Container {
 			return;
 		}
 
-		this.alphaFilter.alpha = 0.0;
+		this.sprite.alpha = 0.0;
 
 		SequencerAnimationEngine.addAnimation(this.id, {
-			target: this.alphaFilter,
+			target: this.sprite,
 			propertyName: "alpha",
 			to: this.data.opacity,
 			duration: fadeIn.duration,
@@ -2973,11 +2854,11 @@ export default class CanvasEffect extends PIXI.Container {
 		)
 			return;
 
-		this.video.volume = 0.0;
+		sprite.volume = 0.0;
 
 		SequencerAnimationEngine.addAnimation(this.id, {
-			target: this,
-			propertyName: "video.volume",
+			target: sprite,
+			propertyName: "volume",
 			to:
 				(this.data.volume ?? 0) *
 				game.settings.get("core", "globalInterfaceVolume"),
@@ -3006,7 +2887,7 @@ export default class CanvasEffect extends PIXI.Container {
 			: Math.max(this._totalDuration - fadeOut.duration + fadeOut.delay, 0);
 
 		SequencerAnimationEngine.addAnimation(this.id, {
-			target: this.alphaFilter,
+			target: this.sprite,
 			propertyName: "alpha",
 			to: 0.0,
 			duration: fadeOut.duration,
